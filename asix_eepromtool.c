@@ -261,18 +261,32 @@ void print_usage()
 {
 	print_header();
 	printf("options:\n");
-	printf("--device=<vid:pid> -d  <vid:pid>        =   vid and pid of device in hex eg. 0b95:772b\n");
-	printf("--bus=<bus> -b  <bus>                   =   (optional) bus number, e.g. 2 or -1 to select the last\n");
-	printf("--device-number=<device> -n  <n>        =   (optional) device number, e.g. 4 or -1 to select the last\n");
-	printf("--read=<file> ,  -r <file>              =   save the eeprom contents to <file>\n");
-	printf("--write=<file> ,   -w <file>            =   write <file> to eeprom\n");
+	printf("--device=<vid:pid> , -d <vid:pid>       =   vid and pid of device in hex (e.g. 0b95:772b)\n");
+	printf("--bus=<bus> , -b <bus>                  =   (optional) bus number, e.g. 2 or -1 to select the last\n");
+	printf("--device-number=<device> , -n <n>       =   (optional) device number, e.g. 4 or -1 to select the last\n");
+	printf("--read=<file> , -r <file>               =   save the eeprom contents to <file>\n");
+	printf("--write=<file> , -w <file>              =   write <file> to eeprom\n");
 	printf("--size=<# of bytes> , -s <# of bytes>   =   size of eeprom in bytes (e.g. 256 or 512)\n");
+	printf("--patch=<vid:pid> , -p <vid:pid>        =   modify the vid:pid in -d to the value in -p when reading or writing\n");
 	printf("\n");
 	printf("example:\n");
 	printf("asix_eepromtool -d 0b95:772b -r eep.bin -s 256\n");
 	printf("asix_eepromtool -d 0b95:772b -b 2 -n 10 -r eep.bin -s 256\n");
 	printf("\n");
-	printf("ps. Run this tool as root\n");
+	printf("p.s. Run this tool as root\n");
+}
+
+void patch_vid_pid(uint8_t* eepbuf, uint16_t new_vid, uint16_t new_pid)
+{
+	printf("Patching in new VID:PID pair of %04X:%04X\n", new_vid, new_pid);
+	eepbuf[0x48] = new_vid >> 8;
+	eepbuf[0x88] = new_vid >> 8;
+	eepbuf[0x49] = new_vid & 0xFF;
+	eepbuf[0x89] = new_vid & 0xFF;
+	eepbuf[0x4A] = new_pid >> 8;
+	eepbuf[0x8A] = new_pid >> 8;
+	eepbuf[0x4B] = new_pid & 0xFF;
+	eepbuf[0x8B] = new_pid & 0xFF;
 }
 
 int main(int argc, char **argv)
@@ -284,7 +298,12 @@ int main(int argc, char **argv)
 	int bus = 0;
 	uint16_t vid = 0;
 	uint16_t pid = 0;
+	uint16_t new_vid = 0;
+	uint16_t new_pid = 0;
 	uint16_t eepsize = 0;
+	int readFlag = 0;
+	int writeFlag = 0;
+	int patchFlag = 0;
 	char *tmp;
 	FILE *readFile = NULL;
 	FILE *writeFile = NULL;
@@ -301,13 +320,14 @@ int main(int argc, char **argv)
 			{"read", required_argument, 0, 'r'},
 			{"write", required_argument, 0, 'w'},
 			{"size", required_argument, 0, 's'},
+			{"patch", required_argument, 0, 'p'},
 			{0, 0, 0, 0}
 	};
 
 	while (1) {
 		int option_index = 0;
 
-		c = getopt_long (argc, argv, "d:b:n:r:w:s:",
+		c = getopt_long (argc, argv, "d:b:n:r:w:s:p:a:",
 				 long_options, &option_index);
 
 		if (c == -1) {
@@ -315,7 +335,7 @@ int main(int argc, char **argv)
 		}
 
 		switch (c) {
-	        case 0:
+		case 0:
 			if (long_options[option_index].flag != 0) {
 				break;
 			}
@@ -333,7 +353,7 @@ int main(int argc, char **argv)
 				exit(1);
 			}
 			break;
-        	case 'd':
+		case 'd':
 			tmp = strtok(optarg,":");
 			vid = strtoul(tmp,NULL,16);
 			tmp = strtok(NULL,":");
@@ -341,22 +361,33 @@ int main(int argc, char **argv)
 				pid=strtoul(tmp,NULL,16);
 			}
 			break;
-        	case 'r':
-			readFile = fopen(optarg,"wb");
+		case 'p':
+			tmp = strtok(optarg,":");
+			new_vid = strtoul(tmp,NULL,16);
+			tmp = strtok(NULL,":");
+			if (tmp != NULL) {
+				new_pid=strtoul(tmp,NULL,16);
+			}
+			patchFlag = 1;
 			break;
-	        case 'w':
-	        	writeFile = fopen(optarg,"rb");
+		case 'r':
+			readFile = fopen(optarg,"wb");
+			readFlag = 1;
+			break;
+		case 'w':
+			writeFile = fopen(optarg,"rb");
+			writeFlag = 1;
 			break;
 		case 's':
 			eepsize = strtoul(optarg,NULL,10);
 			break;
-	        case '?':
+		case '?':
 			print_usage();
 			exit(0);
 			break;
-	        default:
+		default:
 			exit(1);
-	        }
+		}
 	}
 
 	print_header();
@@ -370,16 +401,18 @@ int main(int argc, char **argv)
 	}
 
 	if ((readFile == NULL) && (writeFile == NULL)) {
-		printf("Read/write filename not specified or file open error\n");
-		exit(1);
+		if ((readFlag == 0) || (writeFlag == 0)) {
+			printf("Read/write filename not specified or file open error\n");
+			exit(1);
+		}
 	}
 
-	if (eepsize %2 != 0) {
+	if (eepsize % 2 != 0) {
 		printf("EEPROM size must be a multiple of 2\n");
 		exit(1);
 	}
 
-        printf("Device is %04X:%04X\n", vid, pid);
+	printf("Device is %04X:%04X\n", vid, pid);
 	printf("EEPROM is %d bytes\n", eepsize);
 
 	if (bus && devnum) {
@@ -395,18 +428,36 @@ int main(int argc, char **argv)
 		printf("Device opened\n");
 	}
 
-	if (readFile != NULL) {
-		printf("Reading...\n");
+	if (readFlag) {
+		printf("Reading from EEPROM...\n");
 		status = read_eeprom(eepsize, (uint16_t*)&eepbuf);
+	}
+	
+	if (new_vid && new_pid && patchFlag) {
+		patch_vid_pid(eepbuf, new_vid, new_pid);
+		patchFlag = 0; // Only need to patch once
+	}
+	
+	if (readFile != NULL) {
+		printf("Saving to file...\n");
 		fwrite(&eepbuf, 1, eepsize, readFile);
 		fclose(readFile);
 	}
 
 	if (writeFile != NULL) {
-		printf("Writing...\n");
+		printf("Reading from file...\n");
 		fread(&eepbuf, 1, eepsize, writeFile);
+	}
+
+	if (new_vid && new_pid && patchFlag) {
+		patch_vid_pid(eepbuf, new_vid, new_pid);
+		patchFlag = 0;
+	}
+
+	if (writeFlag) {
+		printf("Writing to EEPROM...\n");
 		status = write_eeprom(eepsize, (uint16_t*)&eepbuf);
-        	fclose(writeFile);
+		fclose(writeFile);
 	}
 
 	if (status < 0) {
