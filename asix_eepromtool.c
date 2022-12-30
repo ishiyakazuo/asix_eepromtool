@@ -268,6 +268,8 @@ void print_usage()
 	printf("--write=<file> , -w <file>              =   write <file> to eeprom\n");
 	printf("--size=<# of bytes> , -s <# of bytes>   =   size of eeprom in bytes (e.g. 256 or 512)\n");
 	printf("--patch=<vid:pid> , -p <vid:pid>        =   modify the vid:pid in -d to the value in -p when reading or writing\n");
+	printf("--copy , -c                             =   rewrite the eeprom with the read data (only useful when patching)\n");
+	printf("--apple, -a                             =   modify the vid:pid of Apple A1277 to ASIX AX88772A automatically\n");
 	printf("\n");
 	printf("example:\n");
 	printf("asix_eepromtool -d 0b95:772b -r eep.bin -s 256\n");
@@ -303,7 +305,6 @@ int main(int argc, char **argv)
 	uint16_t eepsize = 0;
 	int readFlag = 0;
 	int writeFlag = 0;
-	int patchFlag = 0;
 	char *tmp;
 	FILE *readFile = NULL;
 	FILE *writeFile = NULL;
@@ -321,13 +322,15 @@ int main(int argc, char **argv)
 			{"write", required_argument, 0, 'w'},
 			{"size", required_argument, 0, 's'},
 			{"patch", required_argument, 0, 'p'},
+			{"apple", 0, 0, 'a'},
+			{"copy", 0, 0, 'c'},
 			{0, 0, 0, 0}
 	};
 
 	while (1) {
 		int option_index = 0;
 
-		c = getopt_long (argc, argv, "d:b:n:r:w:s:p:a:",
+		c = getopt_long (argc, argv, "d:b:n:r:w:s:p:ac",
 				 long_options, &option_index);
 
 		if (c == -1) {
@@ -368,13 +371,25 @@ int main(int argc, char **argv)
 			if (tmp != NULL) {
 				new_pid=strtoul(tmp,NULL,16);
 			}
-			patchFlag = 1;
+			break;
+		case 'a':
+			vid = 0x05ac;
+			pid = 0x1402;
+			new_vid = 0x0b95;
+			new_pid = 0x772a;
+			eepsize = 256;
+			readFlag = 1;
+			writeFlag = 1;
 			break;
 		case 'r':
 			readFile = fopen(optarg,"wb");
 			readFlag = 1;
 			break;
 		case 'w':
+			writeFile = fopen(optarg,"rb");
+			writeFlag = 1;
+			break;
+		case 'c':
 			writeFile = fopen(optarg,"rb");
 			writeFlag = 1;
 			break;
@@ -433,9 +448,8 @@ int main(int argc, char **argv)
 		status = read_eeprom(eepsize, (uint16_t*)&eepbuf);
 	}
 	
-	if (new_vid && new_pid && patchFlag) {
+	if (new_vid && new_pid && (writeFlag == 0)) {
 		patch_vid_pid(eepbuf, new_vid, new_pid);
-		patchFlag = 0; // Only need to patch once
 	}
 	
 	if (readFile != NULL) {
@@ -443,21 +457,19 @@ int main(int argc, char **argv)
 		fwrite(&eepbuf, 1, eepsize, readFile);
 		fclose(readFile);
 	}
-
 	if (writeFile != NULL) {
 		printf("Reading from file...\n");
 		fread(&eepbuf, 1, eepsize, writeFile);
+		fclose(writeFile);
 	}
 
-	if (new_vid && new_pid && patchFlag) {
+	if (new_vid && new_pid && writeFlag) {
 		patch_vid_pid(eepbuf, new_vid, new_pid);
-		patchFlag = 0;
 	}
 
 	if (writeFlag) {
 		printf("Writing to EEPROM...\n");
 		status = write_eeprom(eepsize, (uint16_t*)&eepbuf);
-		fclose(writeFile);
 	}
 
 	if (status < 0) {
