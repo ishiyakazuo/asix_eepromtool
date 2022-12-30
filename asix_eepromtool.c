@@ -390,7 +390,7 @@ int main(int argc, char **argv)
 			writeFlag = 1;
 			break;
 		case 'c':
-			writeFile = fopen(optarg,"rb");
+			readFlag = 1;
 			writeFlag = 1;
 			break;
 		case 's':
